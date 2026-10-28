@@ -1,0 +1,15 @@
+[Unit]
+Description=BPS FastAPI service
+After=network.target
+[Service]
+User=bps
+Group=bps
+WorkingDirectory=/opt/bps/backend
+EnvironmentFile=/opt/bps/backend/.env
+ExecStart=/opt/bps/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+PrivateTmp=true
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target
+

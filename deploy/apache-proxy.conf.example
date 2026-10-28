@@ -1,0 +1,19 @@
+# Enable proxy/proxy_http and adapt paths only after identifying the server OS.
+<VirtualHost *:80>
+    ServerName bps.example.com
+    Redirect permanent / https://bps.example.com/
+</VirtualHost>
+<VirtualHost *:443>
+    ServerName bps.example.com
+    DocumentRoot /opt/bps/frontend/dist
+    SSLEngine on
+    # Use certificates managed by WHM/AutoSSL; paths vary by installation.
+    ProxyPass /api/ http://127.0.0.1:8000/api/
+    ProxyPassReverse /api/ http://127.0.0.1:8000/api/
+    <Directory /opt/bps/frontend/dist>
+        Require all granted
+        Options -Indexes
+        FallbackResource /index.html
+    </Directory>
+</VirtualHost>
+

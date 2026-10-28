@@ -1,0 +1,2 @@
+import {defineStore} from 'pinia'; import {api,setCsrf} from '../services/api';
+export const useAuth=defineStore('auth',{state:()=>({user:null as null|{id:number;username:string},ready:false}),actions:{async check(){try{const {data}=await api.get('/auth/me');this.user=data;setCsrf(data.csrf_token)}catch{this.user=null}finally{this.ready=true}},async login(username:string,password:string){const {data}=await api.post('/auth/login',{username,password});this.user=data;setCsrf(data.csrf_token)},async logout(){await api.post('/auth/logout');this.user=null;setCsrf('')}}});
