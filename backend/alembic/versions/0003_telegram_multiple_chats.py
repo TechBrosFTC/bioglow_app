@@ -9,7 +9,10 @@ depends_on = None
 
 
 def upgrade():
-    op.alter_column("telegram_config", "chat_id", existing_type=sa.String(length=120), type_=sa.Text(), existing_nullable=True)
+    bind = op.get_bind()
+    columns = {column["name"]: column for column in sa.inspect(bind).get_columns("telegram_config")}
+    if not isinstance(columns["chat_id"]["type"], sa.Text):
+        op.alter_column("telegram_config", "chat_id", existing_type=sa.String(length=120), type_=sa.Text(), existing_nullable=True)
 
 
 def downgrade():
