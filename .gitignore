@@ -9,4 +9,5 @@ dist/
 *.log
 *.tar.gz
 *.tsbuildinfo
+*.migration.json
 
