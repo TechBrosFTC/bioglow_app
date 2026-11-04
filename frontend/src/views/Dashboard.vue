@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {onBeforeUnmount, onMounted, ref} from 'vue'
 import {useRouter} from 'vue-router'
-import {Bug, CloudSun, FlaskConical, LogOut, RefreshCw, Thermometer, Wifi} from 'lucide-vue-next'
+import {Bug, CloudSun, FlaskConical, LogOut, RefreshCw, Send, Thermometer, Wifi} from 'lucide-vue-next'
 import {api} from '../services/api'
 import {useAuth} from '../stores/auth'
 
@@ -9,6 +9,10 @@ const data = ref<any>(null)
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
+const telegram = ref({enabled: false, chat_id: '', has_token: false})
+const telegramToken = ref('')
+const telegramStatus = ref('')
+const telegramSaving = ref(false)
 const auth = useAuth()
 const router = useRouter()
 let refreshTimer: number | undefined
@@ -32,10 +36,32 @@ async function logout() {
   router.push('/login')
 }
 
+async function loadTelegram() {
+  try { telegram.value = (await api.get('/telegram-config')).data }
+  catch { telegramStatus.value = 'Não foi possível carregar a configuração.' }
+}
+
+async function saveTelegram() {
+  telegramSaving.value = true; telegramStatus.value = ''
+  try {
+    const payload:any = {enabled: telegram.value.enabled, chat_id: telegram.value.chat_id}
+    if (telegramToken.value.trim()) payload.bot_token = telegramToken.value.trim()
+    telegram.value = (await api.put('/telegram-config', payload)).data
+    telegramToken.value = ''; telegramStatus.value = 'Configuração salva.'
+  } catch (e:any) { telegramStatus.value = e.response?.data?.detail || 'Falha ao salvar a configuração.' }
+  finally { telegramSaving.value = false }
+}
+
+async function testTelegram() {
+  telegramStatus.value = 'Enviando teste…'
+  try { await api.post('/telegram-config/test'); telegramStatus.value = 'Mensagem de teste enviada.' }
+  catch (e:any) { telegramStatus.value = e.response?.data?.detail || 'Falha no teste do Telegram.' }
+}
+
 const fmt = (value: unknown) => value == null ? '—' : new Date(String(value)).toLocaleString('pt-BR')
 
 onMounted(() => {
-  load()
+  load(); loadTelegram()
   refreshTimer = window.setInterval(() => load(true), 10_000)
 })
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
@@ -83,6 +109,24 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
           <p v-if="!data.alerts?.length" class="mt-4 text-sm text-slate-500">Nenhum alerta registrado.</p>
           <div v-for="alert in data.alerts" :key="alert.id" class="mt-3 border-t pt-3"><span class="badge bg-amber/20">{{alert.severity}}</span> {{alert.title}}</div>
         </article>
+      </section>
+      <section class="card mt-4">
+        <div class="flex items-center gap-2"><Send class="text-leaf"/><h2 class="font-bold">Alertas pelo Telegram</h2></div>
+        <p class="mt-2 text-sm text-slate-500">Envia uma mensagem quando um webhook registrar possível Varroa. O token é criptografado e nunca é exibido novamente.</p>
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          <label class="text-sm font-semibold">Bot token
+            <input v-model="telegramToken" type="password" class="mt-1 w-full rounded-xl border border-slate-200 p-3 font-normal" :placeholder="telegram.has_token ? 'Token já configurado' : '123456:ABC...'" autocomplete="off" />
+          </label>
+          <label class="text-sm font-semibold">Chat IDs
+            <textarea v-model="telegram.chat_id" rows="3" class="mt-1 w-full rounded-xl border border-slate-200 p-3 font-normal" placeholder="Um por linha, ou separados por vírgula&#10;123456789&#10;-1001234567890"></textarea>
+          </label>
+        </div>
+        <label class="mt-4 flex items-center gap-2 text-sm font-semibold"><input v-model="telegram.enabled" type="checkbox" class="h-5 w-5" /> Ativar alertas de Varroa</label>
+        <div class="mt-4 flex flex-wrap gap-3">
+          <button class="btn" :disabled="telegramSaving" @click="saveTelegram">{{telegramSaving ? 'Salvando…' : 'Salvar configuração'}}</button>
+          <button class="btn !bg-white !text-forest ring-1 ring-forest/20" :disabled="!telegram.has_token || !telegram.chat_id" @click="testTelegram">Enviar teste</button>
+        </div>
+        <p v-if="telegramStatus" class="mt-3 text-sm text-slate-600">{{telegramStatus}}</p>
       </section>
       <p class="mt-3 text-center text-xs text-slate-400">Atualização automática a cada 10 segundos.</p>
     </template>

@@ -1,13 +1,14 @@
 import json, time
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import check_csrf, new_csrf, payload_hash, require_user, verify_secret
 from app.db.session import get_db
-from app.models import AcidRelease, Alert, Detection, Device, DeviceSyncEvent, Hive, Measurement, Treatment, User
-from app.schemas.api import EspPayload, LoginIn
+from app.models import AcidRelease, Alert, Detection, Device, DeviceSyncEvent, Hive, Measurement, TelegramConfig, Treatment, User
+from app.schemas.api import EspPayload, LoginIn, TelegramConfigIn
+from app.services.telegram import decrypt_token, encrypt_token, notify_varroa, parse_chat_ids, send_message
 
 router = APIRouter(prefix="/api/v1")
 login_attempts: dict[str, list[float]] = {}
@@ -53,13 +54,47 @@ def listing(model, request, db, hive_id=None, limit=200):
 @router.get("/measurements")
 def measurements(request:Request,hive_id:int|None=None,limit:int=200,db:Session=Depends(get_db)): return listing(Measurement,request,db,hive_id,limit)
 @router.get("/detections")
-def detections(request:Request,hive_id:int|None=None,limit:int=200,db:Session=Depends(get_db)): return listing(Detection,request,db,hive_id,limit)
+def detections(request:Request,hive_id:int|None=None,limit:int=200,days:int=3,db:Session=Depends(get_db)):
+    private(request)
+    since=datetime.now(timezone.utc)-timedelta(days=max(1,min(days,365)))
+    q=select(Detection).where(Detection.detected_at>=since).order_by(Detection.id.desc()).limit(min(limit,1000))
+    if hive_id:q=q.where(Detection.hive_id==hive_id)
+    return [serialize(x) for x in db.scalars(q).all()]
 @router.get("/treatments")
 def treatments(request:Request,hive_id:int|None=None,limit:int=200,db:Session=Depends(get_db)): return listing(Treatment,request,db,hive_id,limit)
 @router.get("/acid-releases")
 def releases(request:Request,hive_id:int|None=None,limit:int=200,db:Session=Depends(get_db)): return listing(AcidRelease,request,db,hive_id,limit)
 @router.get("/alerts")
 def alerts(request:Request,hive_id:int|None=None,limit:int=200,db:Session=Depends(get_db)): return listing(Alert,request,db,hive_id,limit)
+
+@router.get("/telegram-config")
+def telegram_config(request:Request,db:Session=Depends(get_db)):
+    private(request); config=db.get(TelegramConfig,1)
+    return {"enabled":bool(config and config.enabled),"chat_id":config.chat_id if config else "","has_token":bool(config and config.bot_token_encrypted)}
+
+@router.put("/telegram-config")
+def save_telegram_config(data:TelegramConfigIn,request:Request,db:Session=Depends(get_db)):
+    private(request);check_csrf(request)
+    config=db.get(TelegramConfig,1) or TelegramConfig(id=1)
+    chat_id=(data.chat_id or "").strip()
+    if data.enabled and (not parse_chat_ids(chat_id) or not (data.bot_token or config.bot_token_encrypted)):
+        raise HTTPException(422,"Token e Chat ID são obrigatórios para ativar o Telegram")
+    config.chat_id=chat_id or None;config.enabled=data.enabled
+    if data.bot_token and data.bot_token.strip():config.bot_token_encrypted=encrypt_token(data.bot_token.strip())
+    db.add(config);db.commit()
+    return {"enabled":config.enabled,"chat_id":config.chat_id or "","has_token":bool(config.bot_token_encrypted)}
+
+@router.post("/telegram-config/test")
+async def test_telegram(request:Request,db:Session=Depends(get_db)):
+    private(request);check_csrf(request);config=db.get(TelegramConfig,1)
+    if not config or not config.bot_token_encrypted or not config.chat_id:raise HTTPException(422,"Configure token e Chat ID primeiro")
+    chat_ids=parse_chat_ids(config.chat_id)
+    if not chat_ids:raise HTTPException(422,"Configure pelo menos um Chat ID")
+    try:
+        token=decrypt_token(config.bot_token_encrypted)
+        for chat_id in chat_ids:await send_message(token,chat_id,"🧪 <b>BPS — Teste do Telegram</b>\n\n✅ Configuração validada com sucesso.")
+    except Exception as exc:raise HTTPException(502,f"Falha ao enviar teste ao Telegram: {exc}") from exc
+    return {"ok":True,"chats_notified":len(chat_ids)}
 
 @router.patch("/alerts/{item_id}/read")
 def read_alert(item_id:int,request:Request,db:Session=Depends(get_db)):
@@ -90,7 +125,7 @@ def overview(request:Request,hive_id:int|None=None,days:int=30,db:Session=Depend
 def consumption(request:Request,hive_id:int|None=None,db:Session=Depends(get_db)): return {"releases":listing(AcidRelease,request,db,hive_id,1000),"note":"Consumption is shown only when the device supplies a valid amount."}
 
 @router.post("/webhooks/esp32",status_code=201)
-async def webhook(data:EspPayload,request:Request,response:Response,x_device_key:str=Header(alias="X-Device-Key"),db:Session=Depends(get_db)):
+async def webhook(data:EspPayload,request:Request,response:Response,background_tasks:BackgroundTasks,x_device_key:str=Header(alias="X-Device-Key"),db:Session=Depends(get_db)):
     device=db.scalar(select(Device).where(Device.device_uid==data.device_id))
     if not device or not verify_secret(device.api_key_hash,x_device_key): raise HTTPException(401,"Invalid device credentials")
     existing=db.scalar(select(DeviceSyncEvent).where(DeviceSyncEvent.device_id==device.id,DeviceSyncEvent.event_uid==data.event_id))
@@ -105,5 +140,7 @@ async def webhook(data:EspPayload,request:Request,response:Response,x_device_key
             db.add(AcidRelease(hive_id=device.hive_id,device_id=device.id,event_uid=data.event_id,released_amount=data.formic_acid.released_amount,unit=data.formic_acid.unit,released_at=measured_at))
         device.last_seen_at=datetime.now(timezone.utc); db.commit()
     except Exception: db.rollback(); raise
+    if data.varroa.positive_detections > 0:
+        background_tasks.add_task(notify_varroa,data.event_id,data.device_id,data.timestamp.isoformat())
     return {"status":"accepted","event_id":data.event_id,"simulated":data.simulated}
 

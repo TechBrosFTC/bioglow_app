@@ -30,3 +30,8 @@ class EspPayload(BaseModel):
     formic_acid: FormicAcidIn
     simulated: bool = False
 
+class TelegramConfigIn(BaseModel):
+    enabled: bool = False
+    chat_id: str | None = Field(default=None, max_length=2000)
+    bot_token: str | None = Field(default=None, max_length=256)
+
