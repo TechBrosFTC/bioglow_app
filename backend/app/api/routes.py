@@ -41,7 +41,8 @@ def save_alternating_passage(
     ))
     if existing:
         response.status_code = 200
-        return {"status": "duplicate", "event_id": data.event_id}
+        return {"status": "duplicate", "event_id": data.event_id,
+                "activate_relay": False}
 
     previous = db.scalar(select(func.count(Detection.id)).where(
         Detection.device_id == device.id,
@@ -116,6 +117,7 @@ def save_alternating_passage(
         "sequence": sequence,
         "classification": "com_varroa" if has_varroa else "sem_varroa",
         "acid_level_percent": acid_level,
+        "activate_relay": has_varroa,
     }
 
 @router.post("/auth/login")

@@ -48,10 +48,12 @@ def test_passages_alternate_and_duplicate_does_not_advance():
                                  json={"device_id": "BPS-CAM-001", "event_id": "p-2"})
         assert first.status_code == 201
         assert first.json()["classification"] == "sem_varroa"
+        assert first.json()["activate_relay"] is False
         assert duplicate.status_code == 200
         assert duplicate.json()["status"] == "duplicate"
         assert second.status_code == 201
         assert second.json()["classification"] == "com_varroa"
+        assert second.json()["activate_relay"] is True
         with session_local() as db:
             rows = db.scalars(select(Detection).order_by(Detection.id)).all()
             assert [row.classification for row in rows] == [
