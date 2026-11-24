@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.security import hash_secret
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import Detection, Device, Hive, Measurement
+from app.models import AcidRelease, Detection, Device, Hive, Measurement
 
 
 def test_passages_alternate_and_duplicate_does_not_advance():
@@ -60,5 +60,10 @@ def test_passages_alternate_and_duplicate_does_not_advance():
             measurements = db.scalars(select(Measurement).order_by(Measurement.id)).all()
             assert measurements[-1].reservoir_level_percent == 48.0
             assert second.json()["acid_level_percent"] == 48.0
+            releases = db.scalars(select(AcidRelease)).all()
+            assert len(releases) == 1
+            assert releases[0].event_uid == "p-2"
+            assert releases[0].released_amount == 2.0
+            assert releases[0].unit == "%"
     finally:
         app.dependency_overrides.clear()

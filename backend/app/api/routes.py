@@ -92,6 +92,15 @@ def save_alternating_passage(
                 reservoir_level_percent=acid_level,
                 measured_at=detected_at,
             ))
+            db.add(AcidRelease(
+                hive_id=device.hive_id,
+                device_id=device.id,
+                treatment_id=None,
+                event_uid=data.event_id,
+                released_amount=2.0,
+                unit="%",
+                released_at=detected_at,
+            ))
         device.last_seen_at = datetime.now(timezone.utc)
         db.commit()
     except Exception:
