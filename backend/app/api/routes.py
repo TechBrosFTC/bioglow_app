@@ -1,5 +1,6 @@
 import json, time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -11,6 +12,10 @@ from app.schemas.api import EspPayload, LoginIn, PassageIn, TelegramConfigIn
 from app.services.telegram import decrypt_token, encrypt_token, notify_varroa, parse_chat_ids, send_message
 
 router = APIRouter(prefix="/api/v1")
+try:
+    SAO_PAULO = ZoneInfo("America/Sao_Paulo")
+except ZoneInfoNotFoundError:
+    SAO_PAULO = timezone(timedelta(hours=-3), name="America/Sao_Paulo")
 login_attempts: dict[str, list[float]] = {}
 def serialize(row):
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
@@ -44,11 +49,11 @@ def save_alternating_passage(
     sequence = previous + 1
     has_varroa = sequence % 2 == 0
     classification = "bee_with_varroa" if has_varroa else "bee_without_varroa"
-    detected_at = data.timestamp or datetime.now(timezone.utc)
+    detected_at = data.timestamp or datetime.now(SAO_PAULO)
     if detected_at.tzinfo is None:
-        detected_at = detected_at.replace(tzinfo=timezone.utc)
+        detected_at = detected_at.replace(tzinfo=SAO_PAULO)
     else:
-        detected_at = detected_at.astimezone(timezone.utc)
+        detected_at = detected_at.astimezone(SAO_PAULO)
     raw = data.model_dump_json().encode()
     try:
         db.add(DeviceSyncEvent(
