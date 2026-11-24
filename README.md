@@ -74,6 +74,14 @@ npm run build
 
 A documentação interativa fica em `/docs`. Endpoints privados exigem cookie HttpOnly e, para alterações, `X-CSRF-Token`. O webhook usa `X-Device-Key`, separada da sessão humana. Eventos repetidos pelo par dispositivo/evento retornam `status: duplicate` sem novas gravações.
 
+### Registro sequencial de passagens
+
+`POST /api/v1/vision/passages` recebe JSON com `device_id`, `event_id` e `timestamp`
+opcional, autenticado por `X-Device-Key`. Nenhuma imagem e enviada e nao ha inferencia.
+Para cada dispositivo, o servidor grava as passagens alternadamente como `sem_varroa`
+e `com_varroa`, comecando por `sem_varroa`. Repetir o mesmo `event_id` nao avanca a
+sequencia nem duplica o registro.
+
 ## Deploy WHM/cPanel
 
 1. Identifique a distribuição e as políticas do servidor antes de instalar pacotes.

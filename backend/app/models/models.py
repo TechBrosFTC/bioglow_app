@@ -50,6 +50,11 @@ class Detection(Base):
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
     samples_analyzed: Mapped[int] = mapped_column(Integer)
     positive_detections: Mapped[int] = mapped_column(Integer)
+    classification: Mapped[str | None] = mapped_column(String(32), index=True)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    confidence_margin: Mapped[float | None] = mapped_column(Float)
+    model_label: Mapped[str | None] = mapped_column(String(120))
+    model_accepted: Mapped[bool | None] = mapped_column(Boolean)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

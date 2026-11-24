@@ -30,6 +30,11 @@ class EspPayload(BaseModel):
     formic_acid: FormicAcidIn
     simulated: bool = False
 
+class PassageIn(BaseModel):
+    device_id: str = Field(min_length=1, max_length=100)
+    event_id: str = Field(min_length=1, max_length=140)
+    timestamp: datetime | None = None
+
 class TelegramConfigIn(BaseModel):
     enabled: bool = False
     chat_id: str | None = Field(default=None, max_length=2000)

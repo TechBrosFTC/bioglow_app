@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.security import check_csrf, new_csrf, payload_hash, require_user, verify_secret
 from app.db.session import get_db
 from app.models import AcidRelease, Alert, Detection, Device, DeviceSyncEvent, Hive, Measurement, TelegramConfig, Treatment, User
-from app.schemas.api import EspPayload, LoginIn, TelegramConfigIn
+from app.schemas.api import EspPayload, LoginIn, PassageIn, TelegramConfigIn
 from app.services.telegram import decrypt_token, encrypt_token, notify_varroa, parse_chat_ids, send_message
 
 router = APIRouter(prefix="/api/v1")
@@ -15,6 +15,70 @@ login_attempts: dict[str, list[float]] = {}
 def serialize(row):
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
 def private(request: Request): return require_user(request)
+
+@router.post("/vision/passages", status_code=201)
+def save_alternating_passage(
+    data: PassageIn,
+    response: Response,
+    x_device_key: str = Header(alias="X-Device-Key"),
+    db: Session = Depends(get_db),
+):
+    """Persist motion events alternating sem/com varroa; no image or inference."""
+    device = db.scalar(
+        select(Device).where(Device.device_uid == data.device_id).with_for_update()
+    )
+    if not device or not verify_secret(device.api_key_hash, x_device_key):
+        raise HTTPException(401, "Invalid device credentials")
+    existing = db.scalar(select(DeviceSyncEvent).where(
+        DeviceSyncEvent.device_id == device.id,
+        DeviceSyncEvent.event_uid == data.event_id,
+    ))
+    if existing:
+        response.status_code = 200
+        return {"status": "duplicate", "event_id": data.event_id}
+
+    previous = db.scalar(select(func.count(Detection.id)).where(
+        Detection.device_id == device.id,
+        Detection.model_label == "alternating_sequence",
+    )) or 0
+    sequence = previous + 1
+    has_varroa = sequence % 2 == 0
+    classification = "bee_with_varroa" if has_varroa else "bee_without_varroa"
+    detected_at = data.timestamp or datetime.now(timezone.utc)
+    if detected_at.tzinfo is None:
+        detected_at = detected_at.replace(tzinfo=timezone.utc)
+    else:
+        detected_at = detected_at.astimezone(timezone.utc)
+    raw = data.model_dump_json().encode()
+    try:
+        db.add(DeviceSyncEvent(
+            device_id=device.id,
+            event_uid=data.event_id,
+            payload_hash=payload_hash(raw),
+        ))
+        db.add(Detection(
+            hive_id=device.hive_id,
+            device_id=device.id,
+            samples_analyzed=1,
+            positive_detections=int(has_varroa),
+            classification=classification,
+            confidence=None,
+            confidence_margin=None,
+            model_label="alternating_sequence",
+            model_accepted=None,
+            detected_at=detected_at,
+        ))
+        device.last_seen_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {
+        "status": "saved",
+        "event_id": data.event_id,
+        "sequence": sequence,
+        "classification": "com_varroa" if has_varroa else "sem_varroa",
+    }
 
 @router.post("/auth/login")
 def login(data: LoginIn, request: Request, db: Session = Depends(get_db)):
