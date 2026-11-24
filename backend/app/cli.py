@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import DateTime, func, select
 from app.core.security import hash_secret
 from app.db.session import Base, SessionLocal, engine
-from app.models import Device, Hive, User
+from app.models import Device, Hive, Measurement, User
 
 MIGRATION_TABLES = [
     "users",
@@ -32,6 +32,28 @@ def create_device():
         if not hive: hive=Hive(name="Colmeia 1",description="Colmeia monitorada",location_label="Não informado"); db.add(hive); db.flush()
         db.add(Device(hive_id=hive.id,device_uid=uid,api_key_hash=hash_secret(key),local_camera_url="http://192.168.4.1/stream")); db.commit()
     print(f"Device created. Save this key now: {key}")
+
+def reset_acid(value_text: str | None):
+    value = float(value_text or "50")
+    if not 0 <= value <= 100:
+        raise SystemExit("Acid level must be between 0 and 100")
+    updated = 0
+    with SessionLocal() as db:
+        for device in db.scalars(select(Device).order_by(Device.id)).all():
+            latest = db.scalar(select(Measurement).where(
+                Measurement.device_id == device.id
+            ).order_by(Measurement.id.desc()).limit(1))
+            db.add(Measurement(
+                hive_id=device.hive_id,
+                device_id=device.id,
+                temperature=latest.temperature if latest else 23.0,
+                humidity=latest.humidity if latest else 70.0,
+                reservoir_level_percent=value,
+                measured_at=datetime.now(timezone.utc),
+            ))
+            updated += 1
+        db.commit()
+    print(f"Acid level reset to {value:.1f}% for {updated} device(s).")
 
 def _json_value(value):
     return value.isoformat() if isinstance(value, datetime) else value
@@ -96,7 +118,7 @@ def import_data(source: str):
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["create-user", "create-device", "export-data", "import-data"])
+    parser.add_argument("command", choices=["create-user", "create-device", "export-data", "import-data", "reset-acid"])
     parser.add_argument("path", nargs="?")
     args = parser.parse_args()
     if args.command == "create-user":
@@ -109,4 +131,6 @@ if __name__=="__main__":
         if not args.path:
             parser.error("import-data requires the migration JSON path")
         import_data(args.path)
+    elif args.command == "reset-acid":
+        reset_acid(args.path)
 
