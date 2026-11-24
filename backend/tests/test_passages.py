@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -6,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.security import hash_secret
 from app.db.session import Base, get_db
 from app.main import app
-from app.models import Detection, Device, Hive
+from app.models import Detection, Device, Hive, Measurement
 
 
 def test_passages_alternate_and_duplicate_does_not_advance():
@@ -20,6 +22,11 @@ def test_passages_alternate_and_duplicate_does_not_advance():
         db.add(hive); db.flush()
         db.add(Device(hive_id=hive.id, device_uid="BPS-CAM-001",
                       api_key_hash=hash_secret("secret")))
+        db.flush()
+        device = db.scalar(select(Device).where(Device.device_uid == "BPS-CAM-001"))
+        db.add(Measurement(hive_id=hive.id, device_id=device.id, temperature=24.0,
+                           humidity=70.0, reservoir_level_percent=50.0,
+                           measured_at=datetime.now(timezone.utc)))
         db.commit()
 
     def override_db():
@@ -50,5 +57,8 @@ def test_passages_alternate_and_duplicate_does_not_advance():
             assert [row.classification for row in rows] == [
                 "bee_without_varroa", "bee_with_varroa"
             ]
+            measurements = db.scalars(select(Measurement).order_by(Measurement.id)).all()
+            assert measurements[-1].reservoir_level_percent == 48.0
+            assert second.json()["acid_level_percent"] == 48.0
     finally:
         app.dependency_overrides.clear()

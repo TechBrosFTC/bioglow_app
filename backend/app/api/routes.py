@@ -56,6 +56,7 @@ def save_alternating_passage(
     else:
         detected_at = detected_at.astimezone(SAO_PAULO)
     raw = data.model_dump_json().encode()
+    acid_level = None
     try:
         db.add(DeviceSyncEvent(
             device_id=device.id,
@@ -74,6 +75,23 @@ def save_alternating_passage(
             model_accepted=None,
             detected_at=detected_at,
         ))
+        if has_varroa:
+            latest = db.scalar(select(Measurement).where(
+                Measurement.device_id == device.id
+            ).order_by(Measurement.id.desc()).limit(1))
+            current_acid = (
+                latest.reservoir_level_percent
+                if latest and latest.reservoir_level_percent is not None else 50.0
+            )
+            acid_level = max(0.0, current_acid - 2.0)
+            db.add(Measurement(
+                hive_id=device.hive_id,
+                device_id=device.id,
+                temperature=latest.temperature if latest else 23.0,
+                humidity=latest.humidity if latest else 70.0,
+                reservoir_level_percent=acid_level,
+                measured_at=detected_at,
+            ))
         device.last_seen_at = datetime.now(timezone.utc)
         db.commit()
     except Exception:
@@ -88,6 +106,7 @@ def save_alternating_passage(
         "event_id": data.event_id,
         "sequence": sequence,
         "classification": "com_varroa" if has_varroa else "sem_varroa",
+        "acid_level_percent": acid_level,
     }
 
 @router.post("/auth/login")
@@ -200,15 +219,17 @@ def consumption(request:Request,hive_id:int|None=None,db:Session=Depends(get_db)
 
 @router.post("/webhooks/esp32",status_code=201)
 async def webhook(data:EspPayload,request:Request,response:Response,background_tasks:BackgroundTasks,x_device_key:str=Header(alias="X-Device-Key"),db:Session=Depends(get_db)):
-    device=db.scalar(select(Device).where(Device.device_uid==data.device_id))
+    device=db.scalar(select(Device).where(Device.device_uid==data.device_id).with_for_update())
     if not device or not verify_secret(device.api_key_hash,x_device_key): raise HTTPException(401,"Invalid device credentials")
     existing=db.scalar(select(DeviceSyncEvent).where(DeviceSyncEvent.device_id==device.id,DeviceSyncEvent.event_uid==data.event_id))
     if existing: response.status_code=200; return {"status":"duplicate","event_id":data.event_id}
     raw=json.dumps(data.model_dump(mode="json"),sort_keys=True,separators=(",",":")).encode()
-    measured_at = data.timestamp.astimezone(timezone.utc)
+    measured_at = data.timestamp.astimezone(SAO_PAULO)
+    latest=db.scalar(select(Measurement).where(Measurement.device_id==device.id).order_by(Measurement.id.desc()).limit(1))
+    acid_level=latest.reservoir_level_percent if latest and latest.reservoir_level_percent is not None else data.formic_acid.reservoir_level_percent
     try:
         db.add(DeviceSyncEvent(device_id=device.id,event_uid=data.event_id,payload_hash=payload_hash(raw)))
-        db.add(Measurement(hive_id=device.hive_id,device_id=device.id,temperature=data.temperature,humidity=data.humidity,reservoir_level_percent=data.formic_acid.reservoir_level_percent,measured_at=measured_at))
+        db.add(Measurement(hive_id=device.hive_id,device_id=device.id,temperature=data.temperature,humidity=data.humidity,reservoir_level_percent=acid_level,measured_at=measured_at))
         db.add(Detection(hive_id=device.hive_id,device_id=device.id,samples_analyzed=data.varroa.samples_analyzed,positive_detections=data.varroa.positive_detections,detected_at=measured_at))
         if data.formic_acid.release_active:
             db.add(AcidRelease(hive_id=device.hive_id,device_id=device.id,event_uid=data.event_id,released_amount=data.formic_acid.released_amount,unit=data.formic_acid.unit,released_at=measured_at))
