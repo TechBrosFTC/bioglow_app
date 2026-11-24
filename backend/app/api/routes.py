@@ -25,6 +25,7 @@ def private(request: Request): return require_user(request)
 def save_alternating_passage(
     data: PassageIn,
     response: Response,
+    background_tasks: BackgroundTasks,
     x_device_key: str = Header(alias="X-Device-Key"),
     db: Session = Depends(get_db),
 ):
@@ -78,6 +79,10 @@ def save_alternating_passage(
     except Exception:
         db.rollback()
         raise
+    if has_varroa:
+        background_tasks.add_task(
+            notify_varroa, data.event_id, data.device_id, detected_at.isoformat()
+        )
     return {
         "status": "saved",
         "event_id": data.event_id,

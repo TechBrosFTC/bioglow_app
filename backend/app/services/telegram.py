@@ -55,7 +55,7 @@ def format_varroa_message(device_uid: str, detected_at: str) -> str:
     formatted_time = local_time.strftime("%d/%m/%Y às %H:%M")
     return (
         "🐝 <b>BPS Vision — Alerta de Varroa</b>\n\n"
-        "🔴 <b>Possível Varroa simulada detectada!</b>\n\n"
+        "🔴 <b>Varroa detectada!</b>\n\n"
         f"📟 <b>Dispositivo:</b> {html.escape(device_uid)}\n"
         f"🕒 <b>Data e hora:</b> {formatted_time}\n\n"
         "⚠️ <i>Resultado experimental. Não representa diagnóstico biológico.</i>"
