@@ -46,6 +46,19 @@ def test_passages_alternate_and_duplicate_does_not_advance():
                                     json={"device_id": "BPS-CAM-001", "event_id": "p-1"})
             second = client.post("/api/v1/vision/passages", headers=headers,
                                  json={"device_id": "BPS-CAM-001", "event_id": "p-2"})
+            telemetry = client.post("/api/v1/webhooks/esp32", headers=headers, json={
+                "device_id": "BPS-CAM-001",
+                "event_id": "telemetry-1",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "temperature": 24.0,
+                "humidity": 70.0,
+                "varroa": {"samples_analyzed": 0, "positive_detections": 0},
+                "formic_acid": {
+                    "reservoir_level_percent": 50.0,
+                    "release_active": False,
+                },
+                "simulated": False,
+            })
         assert first.status_code == 201
         assert first.json()["classification"] == "sem_varroa"
         assert first.json()["activate_relay"] is False
@@ -54,6 +67,7 @@ def test_passages_alternate_and_duplicate_does_not_advance():
         assert second.status_code == 201
         assert second.json()["classification"] == "com_varroa"
         assert second.json()["activate_relay"] is True
+        assert telemetry.status_code == 201
         with session_local() as db:
             rows = db.scalars(select(Detection).order_by(Detection.id)).all()
             assert [row.classification for row in rows] == [

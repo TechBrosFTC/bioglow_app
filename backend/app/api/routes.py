@@ -161,7 +161,10 @@ def measurements(request:Request,hive_id:int|None=None,limit:int=200,db:Session=
 def detections(request:Request,hive_id:int|None=None,limit:int=200,days:int=3,db:Session=Depends(get_db)):
     private(request)
     since=datetime.now(timezone.utc)-timedelta(days=max(1,min(days,365)))
-    q=select(Detection).where(Detection.detected_at>=since).order_by(Detection.id.desc()).limit(min(limit,1000))
+    q=select(Detection).where(
+        Detection.detected_at>=since,
+        Detection.samples_analyzed>0,
+    ).order_by(Detection.id.desc()).limit(min(limit,1000))
     if hive_id:q=q.where(Detection.hive_id==hive_id)
     return [serialize(x) for x in db.scalars(q).all()]
 @router.get("/treatments")
@@ -211,7 +214,10 @@ def dashboard(request:Request,db:Session=Depends(get_db)):
     private(request); hive=db.scalar(select(Hive).order_by(Hive.id));
     if not hive: return {"empty":True,"demo_mode":settings.demo_mode}
     m=db.scalar(select(Measurement).where(Measurement.hive_id==hive.id).order_by(Measurement.measured_at.desc(),Measurement.id.desc()))
-    d=db.scalar(select(Detection).where(Detection.hive_id==hive.id).order_by(Detection.detected_at.desc(),Detection.id.desc()))
+    d=db.scalar(select(Detection).where(
+        Detection.hive_id==hive.id,
+        Detection.samples_analyzed>0,
+    ).order_by(Detection.detected_at.desc(),Detection.id.desc()))
     device=db.scalar(select(Device).where(Device.hive_id==hive.id).order_by(Device.id))
     treatment=db.scalar(select(Treatment).where(Treatment.hive_id==hive.id).order_by(Treatment.id.desc()))
     recent=db.scalars(select(Alert).where(Alert.hive_id==hive.id).order_by(Alert.created_at.desc()).limit(5)).all()
@@ -241,7 +247,8 @@ async def webhook(data:EspPayload,request:Request,response:Response,background_t
     try:
         db.add(DeviceSyncEvent(device_id=device.id,event_uid=data.event_id,payload_hash=payload_hash(raw)))
         db.add(Measurement(hive_id=device.hive_id,device_id=device.id,temperature=data.temperature,humidity=data.humidity,reservoir_level_percent=acid_level,measured_at=measured_at))
-        db.add(Detection(hive_id=device.hive_id,device_id=device.id,samples_analyzed=data.varroa.samples_analyzed,positive_detections=data.varroa.positive_detections,detected_at=measured_at))
+        if data.varroa.samples_analyzed > 0:
+            db.add(Detection(hive_id=device.hive_id,device_id=device.id,samples_analyzed=data.varroa.samples_analyzed,positive_detections=data.varroa.positive_detections,detected_at=measured_at))
         if data.formic_acid.release_active:
             db.add(AcidRelease(hive_id=device.hive_id,device_id=device.id,event_uid=data.event_id,released_amount=data.formic_acid.released_amount,unit=data.formic_acid.unit,released_at=measured_at))
         device.last_seen_at=datetime.now(timezone.utc); db.commit()
